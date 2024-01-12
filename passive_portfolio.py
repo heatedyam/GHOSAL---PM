@@ -1,5 +1,4 @@
 from datetime import datetime
-from dateutil.relativedelta import relativedelta
 import csv
 import logging
 import matplotlib.pyplot as plt
@@ -22,17 +21,12 @@ logging.basicConfig(
 TODAY_DATE = (datetime.today()).strftime('%Y-%m-%d')
 
 '''
-Purpose: to track performance of all stocks pitched.
+Modular script to track performance of all stocks pitched.
 1/n portfolio with returns tracking from date of pitch
 for each stock.
 
-Modular script.
+Returns can be grouped by sector.
 
-YET-TO-DO:
-
--group returns by sector --> code from brinson_main.py
--graph sector and individual returns in sns with legends
--read and initialise dicts from pitched_stock_info.csv
 '''
 
 
@@ -155,12 +149,10 @@ def main():
 
     # stratifies returns by sector. you can select any of the 3 dataframes
     grouped_returns = group_returns(cumul_returns, sector_dict)
+    # displays grouped returns. interim measure while we make a way to graph them.
     for returns in grouped_returns:
         print(f'SECTOR: {returns[0]}')
         print(returns[1].tail())
-
-    # print(daily_returns.tail())
-    # print(avg_daily_returns.tail())
 
 
 if __name__ == '__main__':
