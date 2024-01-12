@@ -1,17 +1,19 @@
-import pandas as pd
-import numpy as np
-import yfinance as yf
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-import seaborn as sns
+import csv
 import logging
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import yfinance as yf
 
 # setting up logging module for debugging purposes
 logging.basicConfig(
     # filename='get data - yfinance.log',
     # levels in ascending order : DEBUG, INFO, WARNING, ERROR, CRITICAL
     # everything below a level will not be printed in terminal at runtime
-    level=logging.WARNING,
+    level=logging.INFO,
     format='[%(levelname)s] %(asctime)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -28,7 +30,7 @@ Modular script.
 
 YET-TO-DO:
 
--group returns by sector
+-group returns by sector --> code from brinson_main.py
 -graph sector and individual returns in sns with legends
 -read and initialise dicts from pitched_stock_info.csv
 '''
@@ -78,48 +80,68 @@ def get_returns(portfolio_history, tracking_dict):
 
     return daily_returns, avg_daily_returns, cumul_returns
 
+
+def graph_returns(df):
+    sns.set(style="whitegrid")
+    plt.figure(figsize=(12, 6))
+    sns.lineplot(data=df)
+
+    # plt.title('Daily Returns of Stocks')
+    # plt.xlabel('Date')
+    # plt.ylabel('Daily Return')
+    # plt.save(f'label:{TODAY_DATE}.png')
+
+
+def make_dicts():
+    # reading csv file and parsing contents into dictionaries
+    with open('pitched_stock_info.csv', 'r') as f:
+        tracking_dict = {}
+        sector_dict = {}
+        reader = csv.reader(f)
+        for line in reader:
+            # key: symbol --> value: date pitched
+            tracking_dict[line[0]] = line[1]
+            # key: symbol --> value: stock sector
+            sector_dict[line[0]] = line[2]
+
+    return tracking_dict, sector_dict
+
+
+# groups any dataframe of returns
+def group_returns(returns, sector_dict):
+
+    # list of sectors
+    sectors = sorted(list(set(sector_dict.values())))
+
+    # all sector returns will be appended here
+    sector_return_list = []
+
+    for sector in sectors:
+        # list comprehension selecting stocks that are in the sector
+        selected_columns = [col for col in returns.columns if sector_dict[col] == sector]
+        logging.debug(f'{sector}: {selected_columns}')
+
+        # date indexing is preserved
+        sector_return = returns[selected_columns]
+        # sector returns are appended to the list as identifier with accompanying dataframe
+        sector_return_list.append([sector, sector_return])
+
+    # returns list of df/name pairs
+    return sector_return_list
+
+
 def main():
-    # Tickers not working with yfinance at the moment
-    #     'HEXA-B': '2023-11-30',
+    # FAULTY TICKERS
+    #     HEXA-B,2023-11-30,Industrials
+
+    stock_info_df = pd.read_csv("pitched_stock_info.csv")
+    stock_info_df.columns = ['Stock symbol', 'Pitch date', 'Sector']
 
     # date format as 'YYYY-MM-DD' for yfinance compatibility
-    tracking_dict = {
-        'DOLE': '2023-12-14', # consumer staple
-        'AC.PA': '2023-12-14', # discretionary
-        'GF.SW': '2023-12-14', # industrials
-        'EXP': '2023-12-07', # materials
-        'IDCC': '2023-12-07', # infotech
-        'JSE.L': '2023-12-07', # energy
-        'RMV.L': '2023-11-30', # comms. services
-        'RMS.PA': '2023-11-30', # discretionary
-        'AI.PA': '2023-11-23',  # materials
-        'IBE.MC': '2023-11-23', # energy
-        'INGR': '2023-11-23', # consumer staples
-        'GOOGL': '2023-11-16', # comms. services
-        'CDNS': '2023-11-16', # infotech
-        'P911.DE': '2023-11-09', # discretionary
-        'GNC.L': '2023-11-09', # consumer staples
-        'CAT': '2023-11-09', # industrials
-    }
-
-    sector_dict = {
-        'DOLE': 'consumer staples',
-        'AC.PA': 'discretionary',
-        'GF.SW': 'industrials',
-        'EXP': 'materials',
-        'IDCC': 'infotech',
-        'JSE.L': 'energy',
-        'RMV.L': 'comms. services',
-        'RMS.PA': 'discretionary',
-        'AI.PA': ' materials',
-        'IBE.MC': 'energy',
-        'INGR': 'consumer staples',
-        'GOOGL': 'comms. services',
-        'CDNS': 'infotech',
-        'P911.DE': 'discretionary',
-        'GNC.L': 'consumer staples',
-        'CAT': 'industrials'
-    }
+    tracking_dict, sector_dict = make_dicts()
+    logging.info(f'tracking_dict: {tracking_dict}')
+    logging.info(f'sector_dict: {sector_dict}')
+    logging.info(print(stock_info_df.tail()))
 
     # iterating from oldest to most recent pitch
     dates = sorted(list(set(tracking_dict.values())))
@@ -131,9 +153,14 @@ def main():
 
     daily_returns, avg_daily_returns, cumul_returns = get_returns(portfolio_history, tracking_dict)
 
-    print(daily_returns.tail())
-    print(avg_daily_returns.tail())
-    print(cumul_returns.tail())
+    # stratifies returns by sector. you can select any of the 3 dataframes
+    grouped_returns = group_returns(cumul_returns, sector_dict)
+    for returns in grouped_returns:
+        print(f'SECTOR: {returns[0]}')
+        print(returns[1].tail())
+
+    # print(daily_returns.tail())
+    # print(avg_daily_returns.tail())
 
 
 if __name__ == '__main__':
