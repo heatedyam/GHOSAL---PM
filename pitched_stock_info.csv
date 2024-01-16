@@ -1,16 +1,16 @@
-DOLE,2023-12-14,Consumer Staples
-AC.PA,2023-12-14,Consumer Discretionary
-GF.SW,2023-12-14,Industrials
-EXP,2023-12-07,Materials
-IDCC,2023-12-07,Information Technology
-JSE.L,2023-12-07,Energy
-RMV.L,2023-11-30,Communication Services
-RMS.PA,2023-11-30,Consumer Discretionary
-AI.PA,2023-11-23,Materials
-IBE.MC,2023-11-23,Energy
-INGR,2023-11-23,Consumer Staples
-GOOGL,2023-11-16,Communication Services
-CDNS,2023-11-16,Information Technology
-P911.DE,2023-11-09,Consumer Discretionary
-GNC.L,2023-11-09,Consumer Staples
-CAT,2023-11-09,Industrials
+DOLE,2023-12-14,Consumer Staples,0.3,0.51
+AC.PA,2023-12-14,Consumer Discretionary,0.91,0.61
+GF.SW,2023-12-14,Industrials,0.53,0.29
+EXP,2023-12-07,Materials,0.96,0.52
+IDCC,2023-12-07,Tech,0.68,0.36
+JSE.L,2023-12-07,Energy,0.19,0.26
+RMV.L,2023-11-30,Tech,0.84,0.79
+RMS.PA,2023-11-30,Consumer Discretionary,0.70,0.21
+AI.PA,2023-11-23,Materials,0.80,0.10
+IBE.MC,2023-11-23,Energy,0.73,0.38
+INGR,2023-11-23,Consumer Staples,0.08,0.57
+GOOGL,2023-11-16,Tech,0.88,0.60
+CDNS,2023-11-16,Tech,0.81,0.26
+P911.DE,2023-11-09,Consumer Discretionary,0.86,0.14
+GNC.L,2023-11-09,Consumer Staples,0.6,0.25
+CAT,2023-11-09,Industrials,0.58,0.84
