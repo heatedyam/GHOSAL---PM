@@ -190,7 +190,7 @@ def get_portfolio_value(allocation, date, currency_dict):
 
     # tried to accommodate for closed trading day - only fix that seems to work
     if date == '2023-11-23':
-        date = '2022-11-21'
+        date = '2023-11-24'
 
     portfolio_value = 0
     value_dict = {}
