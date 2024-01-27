@@ -1,14 +1,18 @@
 from datetime import datetime
 import csv
+
 import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import plotly
+import plotly.express as px
+import plotly.graph_objects as go
 import seaborn as sns
 import yfinance as yf
 import os
 from varname import nameof
+
+
 
 # setting up logging module for debugging purposes
 logging.basicConfig(
@@ -73,17 +77,17 @@ def fetch_pitched_stock_data(tracking_dict, dates):
 
 
 # daily, avg_daily, cumul returns respectively
-def get_returns(portfolio_history, tracking_dict):
+def get_returns(portfolio_history):
     # 1 for 1-day lookback, 21 for 1 month, 252 for 1 year
     daily_returns = portfolio_history.pct_change(1)
 
     # dividing daily returns by no. stocks
-    avg_daily_returns = daily_returns/len(tracking_dict)
+    avg_daily_returns = daily_returns/len(portfolio_history.columns)
 
     # cumulative return for all stocks. graph.
     cumul_returns = (avg_daily_returns + 1).cumprod() - 1
 
-    return daily_returns, avg_daily_returns, cumul_returns
+    return [daily_returns, avg_daily_returns, cumul_returns]
 
 
 def make_dicts():
@@ -110,32 +114,65 @@ def group_returns_by_sector(returns, sector_dict):
     # all sector returns will be appended here
     sector_return_list = []
 
-    for sector in sectors:
+    for sector_name in sectors:
         # list comprehension selecting stocks that are in the sector
-        selected_columns = [col for col in returns.columns if sector_dict[col] == sector]
-        logging.debug(f'{sector}: {selected_columns}')
+        selected_columns = [col for col in returns.columns if sector_dict[col] == sector_name]
+        logging.debug(f'{sector_name}: {selected_columns}')
 
         # date indexing is preserved
         sector_return = returns[selected_columns]
         # sector returns are appended to the list as identifier with accompanying dataframe
-        sector_return_list.append([sector, sector_return])
+        sector_return_list.append([sector_return, sector_name])
 
-    # returns list of df/name pairs
+    # returns list of df/name pairs respectively
     return sector_return_list
 
-# export and plot all returns
+
+# should export and plot all returns
 # plot daily, avg_daily, cumul returns, each for all individual stocks, and each for each sector
-# parameters: multiple returns
-def plot_returns(returns):
+# parameters: single return with string containing type of data
+# considering **kwargs and 'if kwargs:' conditional to handle additional parameter
+# of sector dict in the case of plotting sector performance
+# ** allows flexibility in filenaming
+def write_plot(data, return_type, subject):
+
+    file_name = f'{TODAY_DATE} - Passive Portfolio - {subject} - {return_type}'
+
+    # working directory is same as the script's
+    path = f'Graphs/{TODAY_DATE}/{subject}'
+
+    # LEGACY - SEABORN PLOTTING
+    plt.figure(figsize=(14, 8))
+    sns.set(style="darkgrid")
+
+    for column in data.columns:
+        sns.lineplot(x=data.index, y=data[column], label=column)
+
+    plt.title(f'Passive portfolio - {return_type} - {subject} over time')
+    plt.xlabel('Date')
+    plt.ylabel('Returns')
+    plt.legend(loc='upper right', bbox_to_anchor=(1.12, 1.00))
+
+
+    # if defined path doesn't exist, it'll make it for you.
+    if not os.path.exists(path):
+        # use makedirs for nested directories
+        os.makedirs(path)
+        # saves all sector plots with unique names
+        plt.savefig(f'{path}/{file_name}.png')
+
+    else:
+        plt.savefig(f'{path}/{file_name}.png')
+
+
+def aggregate_df(data):
     pass
 
 
 def main():
-    # FAULTY TICKERS
-    #     HEXA-B,2023-11-30,Industrials
 
-    stock_info_df = pd.read_csv("pitched_stock_info.csv")
-    stock_info_df.columns = ['Stock symbol', 'Pitch date', 'Sector', 'View', 'Confidence']
+    # uses first row of .csv as column names
+    stock_info_df = pd.read_csv("pitched_stock_info.csv", header=0)
 
     # date format as 'YYYY-MM-DD' for yfinance compatibility
     tracking_dict, sector_dict = make_dicts()
@@ -143,7 +180,7 @@ def main():
     logging.info(f'sector_dict: {sector_dict}')
     logging.info(print(stock_info_df.tail()))
 
-    # iterating from oldest to most recent pitch
+    # so we can iterate from oldest to most recent pitches
     dates = sorted(list(set(tracking_dict.values())))
     logging.info(f'Dates: {dates}')
 
@@ -151,96 +188,45 @@ def main():
     portfolio_history = fetch_pitched_stock_data(tracking_dict, dates)
     print(portfolio_history.tail())
 
-    daily_returns, avg_daily_returns, cumul_returns = get_returns(portfolio_history, tracking_dict)
+    # INDIVIDUAL EQUITY CUMULATIVE RETURNS
+    all_returns = get_returns(portfolio_history)
+    # all_returns is a list that adheres to this order
     return_types = ['Daily Returns', 'Avg. Daily Returns', 'Cumul. Returns']
-    return_type = return_types[1]
+    for i, df in enumerate(all_returns):
+        # alternate method of specifying parameters; insensitive to ordering so long as
+        # there are no * or ** operators in the function's definition
+        write_plot(data=df, return_type=return_types[i], subject='Individual Equity Returns')
 
-    # stratifies returns by sector. you can select any of the 3 dataframes
-    # return type will be used as part of exported filenames
-    # SAVES A SET OF GROUPED RETURNS TO INDIVIDUAL SECTOR .PNG
-    grouped_returns = group_returns_by_sector(avg_daily_returns, sector_dict)
+    # 0: Daily returns, 1: avg. daily returns, 2: cumul. returns
+    # returns list of df/sector name pairs respectively
+    grouped_returns = group_returns_by_sector(all_returns[1], sector_dict)
 
+    # SECTOR CUMULATIVE RETURNS
+    # MAKE FUNCTION TO CREATE SINGLE AGGREGATE PLOT OF CUMUL. RETURNS?
+    #   --> would be applicable to each sector, the whole portfolio, and the disc. portfolio
+    avg_daily_sector_returns = pd.DataFrame(index=portfolio_history.index)
+    for sector in grouped_returns:
+        sector_return = sector[0]
+        sector_name = sector[1]
+        logging.info(f'SECTOR: {sector_name}')
 
-    # PLOTTING ALL STOCKS ON ONE GRAPH
-    plt.figure(figsize=(14, 8))
-    sns.set(style="darkgrid")
-
-    for column in cumul_returns.columns:
-        sns.lineplot(x=cumul_returns.index, y=cumul_returns[column], label=column)
-
-    plt.title(f'All stocks - {return_type} over time')
-    plt.xlabel('Date')
-    plt.ylabel('Returns')
-    plt.legend(loc='upper right', bbox_to_anchor=(1.1, 1.00))
-
-
-    # if folder doesn't exist, make new folder titled today's date
-    if not os.path.exists(f'{TODAY_DATE} - all stocks'):
-        os.mkdir(f'{TODAY_DATE} - all stocks')
-        # saves all sector plots with unique names
-        plt.savefig(f'{TODAY_DATE} - all stocks/passive portfolio - all stocks - {return_type} - {TODAY_DATE}.png')
-    else:
-        plt.savefig(f'{TODAY_DATE} - all stocks/passive portfolio - all stocks - {return_type} - {TODAY_DATE}.png')
-
-
-    # PLOTTING PASSIVE PORTFOLIO VALUE OVER TIME
-    portfolio_return = avg_daily_returns.sum(axis=1)
-    portfolio_return = (portfolio_return + 1).cumprod() - 1
-
-    plt.figure(figsize=(14, 8))
-    sns.set(style="darkgrid")
-
-    sns.lineplot(x=portfolio_return.index, y=portfolio_return.values, label='Passive portfolio')
-
-    plt.title(f'Passive portfolio value over time')
-    plt.xlabel('Date')
-    plt.ylabel('Returns')
-    plt.legend(loc='upper right', bbox_to_anchor=(1.1, 1.00))
-
-    if not os.path.exists(f'{TODAY_DATE} - portfolio value'):
-        os.mkdir(f'{TODAY_DATE} - portfolio value')
-        # saves all sector plots with unique names
-        plt.savefig(f'{TODAY_DATE} - portfolio value/passive portfolio - all stocks - {return_type} - {TODAY_DATE}.png')
-    else:
-        plt.savefig(f'{TODAY_DATE} - portfolio value/passive portfolio - all stocks - {return_type} - {TODAY_DATE}.png')
-
-
-
-
-
-    # SECTOR RETURNS
-    avg_daily_sector_returns = pd.DataFrame(index=avg_daily_returns.index)
-    for returns in grouped_returns:
-        sector_name = returns[0]
-        df = returns[1]
-        print(f'SECTOR: {sector_name}')
-        # print(df.tail())
-
-        avg_daily_sector_return = df.sum(axis=1)
+        # sums all columns over the index (time)
+        avg_daily_sector_return = sector_return.sum(axis=1)
         avg_daily_sector_returns[sector_name] = avg_daily_sector_return.values
 
-    sector_cumul_return = (avg_daily_sector_returns + 1).cumprod() - 1
+    cumul_return_by_sector = (avg_daily_sector_returns + 1).cumprod() - 1
+    for column in cumul_return_by_sector.columns:
+        sns.lineplot(x=cumul_return_by_sector.index, y=cumul_return_by_sector[column].values, label=column)
+    write_plot(data=cumul_return_by_sector, return_type=return_types[2], subject='Sector Performance')
 
+    # PLOTTING PASSIVE PORTFOLIO VALUE OVER TIMEW
+    portfolio_return_values = all_returns[1].sum(axis=1)
+    portfolio_return_values = (portfolio_return_values + 1).cumprod() - 1
+    # write_plot() doesn't like it when you pass in a series instead of a dataframe
+    portfolio_return = pd.DataFrame(index=portfolio_history.index)
+    portfolio_return['Return'] = portfolio_return_values
 
-    # Plotting using seaborn - turn into function
-    plt.figure(figsize=(10, 6))
-    sns.set(style="darkgrid")
-
-    for column in sector_cumul_return.columns:
-        sns.lineplot(x=sector_cumul_return.index, y=sector_cumul_return[column].values, label=column)
-
-    plt.title(f'Sector performance over time')
-    plt.xlabel('Date')
-    plt.ylabel('Returns')
-    plt.legend(loc='upper left')
-
-    # if folder doesn't exist, make new folder titled today's date
-    if not os.path.exists(f'{TODAY_DATE} - sector performance'):
-        os.mkdir(f'{TODAY_DATE} - sector performance')
-        # saves all sector plots with unique names
-        plt.savefig(f'{TODAY_DATE} - sector performance/passive portfolio - Cumulative sector returns - {TODAY_DATE}.png')
-    else:
-        plt.savefig(f'{TODAY_DATE} - sector performance/passive portfolio - Cumulative sector returns - {return_type} - {TODAY_DATE}.png')
+    write_plot(data=portfolio_return, return_type=return_types[2], subject='Portfolio Performance')
 
 
 if __name__ == '__main__':
