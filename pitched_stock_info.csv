@@ -1,5 +1,5 @@
-TMUS,2024-01-25,Tech,0.00,0.70
-VK.PA,2024-01-25,Industrials,0.00,0.50
+VK.PA,2024-01-25,Industrials,0.04,0.50
+TMUS,2024-01-25,Tech,0.04,0.58
 VWS.CO,2024-01-25,Energy,0.00,0.50
 OGN.L,2024-01-25,Consumer Staples, -0.02,0.50
 LYB,2024-01-18,Materials,0.00,1
@@ -10,6 +10,7 @@ GF.SW,2023-12-14,Industrials,0.07,0.29
 EXP,2023-12-07,Materials,0.10,0.59
 IDCC,2023-12-07,Tech,0.12,0.36
 JSE.L,2023-12-07,Energy,0.06,0.26
+0GRX.L,2023-11-30,Industrials,0.02,0.28
 RMV.L,2023-11-30,Tech,0.09,0.42
 RMS.PA,2023-11-30,Consumer Discretionary,0.08,0.21
 AI.PA,2023-11-23,Materials,0.04,0.2
