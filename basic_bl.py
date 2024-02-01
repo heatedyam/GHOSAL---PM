@@ -1,14 +1,16 @@
 import logging
 
-from forex_python.converter import CurrencyRates
-import numpy as np
-import pandas as pd
-import yfinance as yf
-import seaborn as sns
 import csv
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+from forex_python.converter import CurrencyRates
 from matplotlib import pyplot as plt
+import numpy as np
+import os
+import pandas as pd
+import plotly
+import seaborn as sns
+import yfinance as yf
 from pypfopt import (
     CLA,
     BlackLittermanModel,
@@ -21,6 +23,7 @@ from pypfopt import (
     DiscreteAllocation,
     plotting
 )
+
 
 # setting up logging module for debugging purposes
 logging.basicConfig(
@@ -37,11 +40,6 @@ To resolve:
 -parsing list of symbols from tracking_dict
 -resolving staggered stock price data into black-litterman model views
 -create function that only includes stocks in tracking_dict before today 
-
--start with 15K at start
--at the pitch dates, multiply discrete allocation by closing price of that day
--and run optimisation again using the old stocks as well as the new stocks pitched
-for the new dates
   
 '''
 
@@ -55,7 +53,7 @@ for the new dates
 global TODAY_DATE
 TODAY_DATE = (datetime.today()).strftime('%Y-%m-%d')
 
-# how far back we'll look for SPY prices (for df fitting purposes)
+# how far back we'll look for SPY prices (for df fitting purposes & mkt. prior)
 years_back = 3
 today_date_raw = datetime.today()
 start_date_raw = today_date_raw - relativedelta(years=years_back)
@@ -70,9 +68,9 @@ def csv_to_dicts():
         tracking_dict = {}
         sector_dict = {}
         view_dict = {}
-        #SHOULD BE NUMPY ARRAY, NOT LIST
+        # confidences will be converted to numpy array
         confidence_list = []
-        mcaps = {}
+        mkt_caps = {}
         reader = csv.reader(f)
         for line in reader:
             # key: symbol --> value: date pitched
@@ -86,10 +84,10 @@ def csv_to_dicts():
 
             # market caps
             ticker = yf.Ticker(line[0])
-            mcaps[line[0]] = ticker.fast_info['marketCap']
+            mkt_caps[line[0]] = ticker.fast_info['marketCap']
 
         confidences = np.array(confidence_list)
-        return tracking_dict, sector_dict, view_dict, confidences, mcaps
+        return tracking_dict, sector_dict, view_dict, confidences, mkt_caps
 
 
 def df_to_dicts(csv_df):
@@ -112,6 +110,9 @@ def df_to_dicts(csv_df):
 
 
 def fetch_pitched_stock_data(tracking_dict, dates):
+    print(tracking_dict.keys())
+
+
     # getting market data from the first pitch date to later fit the date as a column
     # in our own dataframe
     market_prices = yf.download("SPY", start=dates[0], end=TODAY_DATE)["Adj Close"]
@@ -126,10 +127,20 @@ def fetch_pitched_stock_data(tracking_dict, dates):
 
         # creating a 'batch': string of tickers for the current date
         batch = ''.join(key + ' ' for key in tracking_dict if tracking_dict[key] == date)
-
+        print(f'Batch: {batch}')
         # fetching historical price data for the batch
         # logging.info(f'Batch: {batch}, date: {date}')
         price = yf.download(batch, start=date, end=TODAY_DATE)['Adj Close']
+
+        # yfinance returns a series if it only downloads from 1 ticker
+        # so this covers that by turning the series into a dataframe
+        if isinstance(price, pd.Series):
+            price_df = pd.DataFrame(index=price.index)
+            # price_df['Date'] = price.index
+            price_df[batch] = price.values
+            price = price_df
+
+
         # replaces default date index from yf with regular integer index
         price.reset_index(inplace=True, drop=False)
 
@@ -139,35 +150,81 @@ def fetch_pitched_stock_data(tracking_dict, dates):
         # turning ['Date'] column into index
         merged_prices.set_index('Date', inplace=True)
 
+    print(merged_prices)
+
     # returns Pandas dataframe
     return merged_prices
 
 
+# black_litterman.py seems to freak out when we only give it 1 asset.
+# to isolate risk of runtime error, creating this func instead
+# ERROR: results in a 2x1 matrix
+def one_asset_prior(mkt_caps_dict, risk_aversion, cov_matrix, risk_free_rate):
+
+    mkt_caps = pd.Series(mkt_caps_dict)
+    mkt_weights = mkt_caps / mkt_caps.sum()
+
+    # ADDED BY ELMO - due to dot product issues with mkt_weights
+    # Pi is excess returns so must add risk_free_rate to get return.
+    print(f'COV MATRIX: {cov_matrix}')
+    print(f"mkt_weights shape: {mkt_weights.shape}")
+    print(mkt_weights)
+    print(f'Type of mkt_weights: {type(mkt_weights)}')
+
+    return ((risk_aversion * cov_matrix * (mkt_weights)) + risk_free_rate)
+
+
 def optimisation(merged_prices, confidences, view_dict, mkt_caps, capital):
     # OPTIMISATION
+    print(f'VIEW DICT: {view_dict}')
+    # current US 10-year treasury yield
+    risk_free_rate = 0.0414
     latest_prices = merged_prices.iloc[-1]
     returns = merged_prices.pct_change().dropna()
 
     mu = expected_returns.mean_historical_return(merged_prices)
     Sigma = risk_models.sample_cov(merged_prices)
-
     # constructing market prior
     spy_prices = yf.download('SPY', start=START_DATE, end=TODAY_DATE)['Adj Close']
     delta = black_litterman.market_implied_risk_aversion(spy_prices)
-    prior = black_litterman.market_implied_prior_returns(mkt_caps, delta, Sigma)
+
+    print(Sigma)
+    print(mkt_caps)
+
+    # if len(view_dict) == 1:
+    #     # prior = one_asset_prior(
+    #     #     mkt_caps_dict = mkt_caps,
+    #     #     risk_aversion=delta,
+    #     #     cov_matrix=Sigma,
+    #     #     risk_free_rate=risk_free_rate
+    #     # )
+    #     # print(f'Prior: {prior}')
+    #     pass
+    # else:
+
+    # ----> VALUEERROR: matrices are not aligned
+    #   cov_matrix.dot(mkt_weights) + risk_free_rate
+    prior = black_litterman.market_implied_prior_returns(
+        market_caps=mkt_caps,
+        risk_aversion=delta,
+        cov_matrix=Sigma,
+        risk_free_rate=risk_free_rate
+    )
+    print(f'Prior: {prior}')
     # logging.info(f'Prior: {prior}')
 
-    # setting weight bounds --> to deviate 5% from a 1/n portfolio, given that a 1/n portfolio
-    # has strong returns
+    # setting weight bounds --> to deviate 5% from a 1/n portfolio, given that 1/n portfolios have strong returns
     deviation = 0.05
-    bounds = (1/len(confidences))
+    #
+    bounds = float(1/len(confidences))
     lower_bound = max(0, (bounds - deviation))
     upper_bound = bounds + deviation
 
-    # Black Litterman optimisation
+    # Black-Litterman optimisation
     bl = BlackLittermanModel(Sigma, absolute_views=view_dict, view_confidences=confidences, pi=prior, omega='idzorek')
     rets = bl.bl_returns()
     ef = EfficientFrontier(rets, Sigma, weight_bounds=(lower_bound, upper_bound))
+    # obj. func. --> max sharpe. other options exist too.
     ef_weights = ef.max_sharpe()
 
     # Discrete allocation - start with 15000 -
@@ -188,11 +245,12 @@ def optimisation(merged_prices, confidences, view_dict, mkt_caps, capital):
 
 def get_portfolio_value(allocation, date, currency_dict):
 
-    # tried to accommodate for closed trading day - only fix that seems to work
+    # 23rd nov: thanksgiving, so mkts were closed. crude fix, will probably make a list and add to it as we go along.
     if date == '2023-11-23':
         date = '2023-11-24'
 
     portfolio_value = 0
+    gbp_portfolio_value = 0
     value_dict = {}
     # gets adjacent day 1 day ahead
     # .strptime converts a date string into a date object given a specific format
@@ -210,7 +268,6 @@ def get_portfolio_value(allocation, date, currency_dict):
             logging.info(f'End date: {adj_date}')
             df = yf.download(symbol, start=date, end=adj_date)['Adj Close']
             print(df)
-
         except Exception:
             print('EXCEPTION RAISED')
             logging.info(f'TRYING AGAIN FOR {symbol}')
@@ -223,37 +280,71 @@ def get_portfolio_value(allocation, date, currency_dict):
 
             df = yf.download(symbol, start=new_start_date, end=new_adj_date)['Adj Close']
             print(df)
-
-
         logging.info(f'Getting position value for: {symbol}')
         # NO COLUMN NAME - DF[SYMBOL] DOESN'T WORK
 
-
-        price = float(df.values)
+        price = round(float(df.values), 2)
         logging.info(f'{symbol} price: {price} {currency_dict[symbol]}')
-        # converting to GBP
-        # c = CurrencyRates()
-        # base_currency = currency_dict[symbol]
-        # target_currency = 'GBP'
-        # if base_currency != target_currency:
-        #     exchange_rate = c.get_rate(base_currency, target_currency, start_date)
-        #     logging.info(f'{base_currency} --> {target_currency} = {exchange_rate}')
-        # else:
-        #     exchange_rate = 1
 
-        # gbp_price = price * exchange_rate
+        # converting to GBP
+        c = CurrencyRates()
+        base_currency = currency_dict[symbol]
+        target_currency = 'GBP'
+        if base_currency != target_currency:
+            exchange_rate = c.get_rate(base_currency, target_currency, start_date)
+            logging.info(f'{base_currency} --> {target_currency} = {exchange_rate}')
+        else:
+            exchange_rate = 1
+
+        gbp_price = price * exchange_rate
         position_value = price * qty
+        gbp_position_value = position_value * exchange_rate
 
         value_dict[symbol] = position_value
-        logging.info(f'{symbol} position value: {position_value} {currency_dict[symbol]}')
+        # logging.info(f'{symbol} position value: {position_value} {currency_dict[symbol]}')
+        logging.info(f'{symbol} position GBP value: £{gbp_position_value}')
 
         portfolio_value += position_value
+        gbp_position_value += gbp_position_value
 
     logging.info(f'Portfolio value: ${portfolio_value}')
+    logging.info(f'GBP portfolio value: ${gbp_portfolio_value}')
+
     for symbol, value in value_dict.items():
-        print(f'{symbol} value: ${value}')
+        print(f'{symbol} value: {value} {currency_dict[symbol]}')
 
     return portfolio_value
+
+
+def write_plot(data, subject):
+
+    file_name = f'{TODAY_DATE} - MGMT-picked Discretionary Portfolio - Value'
+
+    # working directory is same as the script's
+    path = f'Graphs/{TODAY_DATE}/{subject}'
+
+    # LEGACY - SEABORN PLOTTING
+    plt.figure(figsize=(14, 8))
+    sns.set(style="darkgrid")
+
+    for column in data.columns:
+        sns.lineplot(x=data.index, y=data[column], label=column)
+
+    plt.title(f'Discretionary portfolio - value over time')
+    plt.xlabel('Date')
+    plt.ylabel('Value (£)')
+    plt.legend(loc='upper right', bbox_to_anchor=(1.12, 1.00))
+
+
+    # if defined path doesn't exist, it'll make it for you.
+    if not os.path.exists(path):
+        # use makedirs for nested directories
+        os.makedirs(path)
+        # saves all sector plots with unique names
+        plt.savefig(f'{path}/{file_name}.png')
+
+    else:
+        plt.savefig(f'{path}/{file_name}.png')
 
 
 def main():
@@ -261,23 +352,17 @@ def main():
     # INITIALISING .CSV AS DF
     # recursion requires cutting entire rows out, which would be more convenient with a pd.df
     # likely going to have to make a pd.df to
-    csv_df = pd.read_csv('pitched_stock_info.csv', header=None, index_col=False)
-    logging.info('CSV_DF - PRE-COLUMNS')
-    print(csv_df)
-    columns = ['Symbol', 'Pitch date', 'Sector', 'View', 'Confidence']
-    csv_df.columns = columns
-    logging.info('CSV_DF - POST-COLUMNS')
+    # columns: Symbol, Pitch date, Sector, View, Confidence
+    csv_df = pd.read_csv('mgmt_picks.csv', header=0, index_col=False)
+
     print(csv_df)
 
+    # for currency conversion of positions
     currency_dict = {}
     for symbol in csv_df['Symbol'].tolist():
         ticker = yf.Ticker(symbol)
         currency_dict[symbol] = ticker.info['currency'].upper()
 
-
-
-
-    # INITIALISING DICTS/LISTS
 
     # getting all dates
     dates = sorted(list(set(csv_df['Pitch date'].tolist())))
@@ -313,9 +398,8 @@ def main():
         # logging.info(f'mkt_caps: {mkt_caps}')
 
         merged_prices = fetch_pitched_stock_data(tracking_dict, loop_dates)
-        print(merged_prices.head())
+        print(merged_prices)
 
-        # CONVERT THE .CSV INTO A DF AND DELETE ROWS AS NEEDED
         allocation, leftover = optimisation(merged_prices, confidences, view_dict, mkt_caps, capital_values[index])
         # assuming that we're going to liquidate and repurchase on the same day 7 days from now
         if 0 <= (index + 1) < len(dates):
@@ -323,19 +407,20 @@ def main():
 
             portfolio_values.append(portfolio_value)
 
-            new_capital_value = portfolio_value + leftover
+            new_capital_value = round((portfolio_value + leftover), 2)
             print(f'portfolio_value: {portfolio_value}')
             capital_values.append(new_capital_value)
         else:
             break
 
+    portfolio_tracker_df = pd.DataFrame(index=dates)
+    portfolio_tracker_df['Value'] = capital_values
+    write_plot(data=portfolio_tracker_df, subject='Black-Litterman')
+
+    print(capital_values)
     for index, value in enumerate(capital_values):
-        print(f'capital_value at {dates[index]}: ${value}')
+        logging.info(f'capital_value at {dates[index]}: £{value}')
 
 
 if __name__ == '__main__':
     main()
-
-
-#
-
