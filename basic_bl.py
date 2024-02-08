@@ -102,6 +102,7 @@ def df_to_dicts(csv_df):
     symbols_list = csv_df['Symbol'].tolist()
     # symbols_str = ''.join(symbol + ' ' for symbol in df['Symbol'].values)
 
+    # IMPORTANT NOTE: INVARIANT, NO KNOWN WAY TO GET MARKET CAPS AT VARYING POINTS IN TIME
     for symbol in symbols_list:
         ticker = yf.Ticker(symbol)
         mkt_caps[symbol] = ticker.info['marketCap']
@@ -109,35 +110,51 @@ def df_to_dicts(csv_df):
     return tracking_dict, sector_dict, view_dict, confidences, mkt_caps
 
 
-def fetch_pitched_stock_data(tracking_dict, dates):
-    print(tracking_dict.keys())
 
+def fetch_pitched_stock_data(tracking_dict, fetch_data_dates, currency_dict):
+    print(tracking_dict.keys())
 
     # getting market data from the first pitch date to later fit the date as a column
     # in our own dataframe
-    market_prices = yf.download("SPY", start=dates[0], end=TODAY_DATE)["Adj Close"]
+    # ==== MARKET PRICES SHOULD ONLY GO UP TO THE END OF THIS ITERATION'S DATES ====
+    market_prices = yf.download('SPY', start=fetch_data_dates[0], end=fetch_data_dates[-1])['Adj Close']
+
+    # MAKE A DATABASE OF THIS IN MYSQL ALREADY
+    conversion_df = pd.read_csv('conversion_table.csv', header=0, index_col=0)
+
 
     # initialising empty master dataframe with dates from market_prices as a column
     # the column 'Date' will later be changed to an index
     merged_prices = pd.DataFrame(market_prices.index.values, columns=['Date'])
 
     # getting price data for all stocks in tracking_dict, tracking from pitch date.
-    for date in dates:
+    for date in fetch_data_dates[:-1]:
+
         # a 'batch' comprises stocks pitched on a specific day of pitches.
 
         # creating a 'batch': string of tickers for the current date
         batch = ''.join(key + ' ' for key in tracking_dict if tracking_dict[key] == date)
         print(f'Batch: {batch}')
+
         # fetching historical price data for the batch
         # logging.info(f'Batch: {batch}, date: {date}')
-        price = yf.download(batch, start=date, end=TODAY_DATE)['Adj Close']
+        price = yf.download(batch, start=date, end=fetch_data_dates[-1])['Adj Close']
+
+
+        # APPLYING CURRENCY CONVERSION
+        # headers = price.columns
+        # for symbol in headers:
+        #     target_currency = currency_dict[symbol]
+        #     exchange_rate = conversion_df[conversion_df.index == date][target_currency].item()
+        #     print(f'EXCH. RATE: {exchange_rate}')
+
 
         # yfinance returns a series if it only downloads from 1 ticker
         # so this covers that by turning the series into a dataframe
         if isinstance(price, pd.Series):
             price_df = pd.DataFrame(index=price.index)
             # price_df['Date'] = price.index
-            price_df[batch] = price.values
+            price_df[batch.strip()] = price.values
             price = price_df
 
 
@@ -150,6 +167,7 @@ def fetch_pitched_stock_data(tracking_dict, dates):
         # turning ['Date'] column into index
         merged_prices.set_index('Date', inplace=True)
 
+    print('MERGED PRICES')
     print(merged_prices)
 
     # returns Pandas dataframe
@@ -166,7 +184,8 @@ def one_asset_prior(mkt_caps_dict, risk_aversion, cov_matrix, risk_free_rate):
 
     # ADDED BY ELMO - due to dot product issues with mkt_weights
     # Pi is excess returns so must add risk_free_rate to get return.
-    print(f'COV MATRIX: {cov_matrix}')
+    print(f'COV MATRIX:')
+    print(cov_matrix)
     print(f"mkt_weights shape: {mkt_weights.shape}")
     print(mkt_weights)
     print(f'Type of mkt_weights: {type(mkt_weights)}')
@@ -174,32 +193,43 @@ def one_asset_prior(mkt_caps_dict, risk_aversion, cov_matrix, risk_free_rate):
     return ((risk_aversion * cov_matrix * (mkt_weights)) + risk_free_rate)
 
 
-def optimisation(merged_prices, confidences, view_dict, mkt_caps, capital):
+def optimisation(merged_prices, confidences, view_dict, mkt_caps, capital, end_date):
     # OPTIMISATION
+    # FEEDING WRONG LATEST_PRICES
+    # KEEPS USING THE SAME PRICES FOR EVERY
+    # ITERATION
+    # INSTEAD, SINCE WE'RE ITERATING
+    # WITH THE DATES,
+    # USE THE MERGED_PRICES ROW AT THAT DATE
+    # YOU'RE ITERATING IN, MULTIPLY BY WEIGHT
+    # AND SUM
+    symbols_list = [symbol for symbol, view in view_dict.items()]
+    print(f'SYMBOLS: {symbols_list}')
     print(f'VIEW DICT: {view_dict}')
     # current US 10-year treasury yield
     risk_free_rate = 0.0414
     latest_prices = merged_prices.iloc[-1]
     returns = merged_prices.pct_change().dropna()
 
+
     mu = expected_returns.mean_historical_return(merged_prices)
     Sigma = risk_models.sample_cov(merged_prices)
     # constructing market prior
-    spy_prices = yf.download('SPY', start=START_DATE, end=TODAY_DATE)['Adj Close']
+    # END SHOULD BE THE LOOP ITERATION DATE WE ARE OPTIMISING FOR
+    spy_prices = yf.download('SPY', start=START_DATE, end=end_date)['Adj Close']
     delta = black_litterman.market_implied_risk_aversion(spy_prices)
 
     print(Sigma)
     print(mkt_caps)
 
     # if len(view_dict) == 1:
-    #     # prior = one_asset_prior(
-    #     #     mkt_caps_dict = mkt_caps,
-    #     #     risk_aversion=delta,
-    #     #     cov_matrix=Sigma,
-    #     #     risk_free_rate=risk_free_rate
-    #     # )
-    #     # print(f'Prior: {prior}')
-    #     pass
+    #     prior = one_asset_prior(
+    #         mkt_caps_dict = mkt_caps,
+    #         risk_aversion=delta,
+    #         cov_matrix=Sigma,
+    #         risk_free_rate=risk_free_rate
+    #     )
+    #     print(f'Prior: {prior}')
     # else:
 
     # ----> VALUEERROR: matrices are not aligned
@@ -220,8 +250,17 @@ def optimisation(merged_prices, confidences, view_dict, mkt_caps, capital):
     lower_bound = max(0, (bounds - deviation))
     upper_bound = bounds + deviation
 
+
     # Black-Litterman optimisation
-    bl = BlackLittermanModel(Sigma, absolute_views=view_dict, view_confidences=confidences, pi=prior, omega='idzorek')
+    print(f'VIEW DICT: {view_dict}')
+    bl = BlackLittermanModel(
+        Sigma,
+        tickers=symbols_list,
+        absolute_views=view_dict,
+        view_confidences=confidences,
+        pi=prior,
+        omega='idzorek'
+    )
     rets = bl.bl_returns()
     ef = EfficientFrontier(rets, Sigma, weight_bounds=(lower_bound, upper_bound))
     # obj. func. --> max sharpe. other options exist too.
@@ -230,6 +269,8 @@ def optimisation(merged_prices, confidences, view_dict, mkt_caps, capital):
     # Discrete allocation - start with 15000 -
     # when you download Adj Close between t and t + 1, it'll get price at t
     da = DiscreteAllocation(ef_weights, latest_prices, total_portfolio_value=capital, short_ratio=None)
+    print(f'EF WEIGHTS:')
+    print(ef_weights)
 
     # OrderedDict
     # for DiscreteAllocation, at the end of every period, calc. current value of positions
@@ -286,37 +327,35 @@ def get_portfolio_value(allocation, date, currency_dict):
         price = round(float(df.values), 2)
         logging.info(f'{symbol} price: {price} {currency_dict[symbol]}')
 
-        # converting to GBP
-        c = CurrencyRates()
-        base_currency = currency_dict[symbol]
-        target_currency = 'GBP'
-        if base_currency != target_currency:
-            exchange_rate = c.get_rate(base_currency, target_currency, start_date)
-            logging.info(f'{base_currency} --> {target_currency} = {exchange_rate}')
-        else:
-            exchange_rate = 1
-
-        gbp_price = price * exchange_rate
+        # # converting to target currency
+        exchange_rate = convert_currency(
+            symbol=symbol,
+            date=date,
+            currency_dict=currency_dict,
+            # target_currency='USD'
+        )
+        print(f'Exchange rate: {exchange_rate}')
         position_value = price * qty
-        gbp_position_value = position_value * exchange_rate
-
+        print(f'BASE CURRENCY POSITION VALUE - {symbol}: {position_value}')
+        # try:
+        #     converted_position_value = position_value * exchange_rate
+        #     value_dict[symbol] = converted_position_value
+        #     portfolio_value += converted_position_value
+        #     print(f'CONVERTED CURRENCY POSITION VALUE - {symbol}: {converted_position_value}')
+        # except:
         value_dict[symbol] = position_value
-        # logging.info(f'{symbol} position value: {position_value} {currency_dict[symbol]}')
-        logging.info(f'{symbol} position GBP value: £{gbp_position_value}')
-
         portfolio_value += position_value
-        gbp_position_value += gbp_position_value
+
 
     logging.info(f'Portfolio value: ${portfolio_value}')
-    logging.info(f'GBP portfolio value: ${gbp_portfolio_value}')
 
     for symbol, value in value_dict.items():
-        print(f'{symbol} value: {value} {currency_dict[symbol]}')
+        print(f'{symbol} value: {value}')
 
     return portfolio_value
 
 
-def write_plot(data, subject):
+def plot_data(data, subject):
 
     file_name = f'{TODAY_DATE} - MGMT-picked Discretionary Portfolio - Value'
 
@@ -347,15 +386,70 @@ def write_plot(data, subject):
         plt.savefig(f'{path}/{file_name}.png')
 
 
+def convert_currency(symbol, date, currency_dict, target_currency='USD'):
+    print(f'date: {date}')
+    date_object = datetime.strptime(date, '%Y-%m-%d').date()
+
+    c = CurrencyRates()
+    base_currency = currency_dict[symbol]
+    # changed
+    if base_currency != target_currency:
+        # worth checking if currency is wrong way round
+        exchange_rate = c.get_rate(base_currency, target_currency, date_object)
+        logging.info(f'{base_currency} --> {target_currency} = {exchange_rate}')
+    else:
+        exchange_rate = 1
+
+    print(f'{symbol} CURRENCY: {base_currency}, EXCH RATE: {exchange_rate}')
+    return exchange_rate
+
+
+def make_conversion_table(currency_dict, dates, target_currency='USD'):
+
+    symbols = [symbol for symbol, currency in currency_dict.items()]
+    unique_currencies = sorted(list(set([currency for symbol, currency in currency_dict.items()])))
+
+    unique_pairs = {}
+    for symbol, currency in currency_dict.items():
+        if currency not in unique_pairs:
+            unique_pairs[symbol] = currency
+
+    master_df = pd.DataFrame(index=dates, columns=unique_currencies)
+    for symbol, currency in unique_pairs.items():
+        print(f'{symbol}, {currency}')
+        table = []
+        for date in dates:
+            value = 1
+            exchange_rate = convert_currency(
+                symbol=symbol,
+                date=date,
+                currency_dict=currency_dict
+            )
+            table.append(exchange_rate)
+        master_df[currency] = table
+    print('MASTER CURRENCY DF')
+    print(master_df)
+    return master_df
+
+
 def main():
 
     # INITIALISING .CSV AS DF
     # recursion requires cutting entire rows out, which would be more convenient with a pd.df
     # likely going to have to make a pd.df to
     # columns: Symbol, Pitch date, Sector, View, Confidence
+    # csv_df = pd.read_csv('pitched_stock_info.csv', header=0, index_col=False)
     csv_df = pd.read_csv('mgmt_picks.csv', header=0, index_col=False)
+    # need plots for:
+    # 1. strategically optimised
+    # 2. optimised all stocks
+    # 3. equal weighted portfolio
+    # 4. benchmark
 
     print(csv_df)
+    # getting all dates
+    dates = sorted(list(set(csv_df['Pitch date'].tolist())))
+    logging.info(f'All dates: {dates}')
 
     # for currency conversion of positions
     currency_dict = {}
@@ -363,26 +457,36 @@ def main():
         ticker = yf.Ticker(symbol)
         currency_dict[symbol] = ticker.info['currency'].upper()
 
+    # currency_table = make_conversion_table(
+    #     currency_dict=currency_dict,
+    #     dates=dates,
+    #     target_currency='USD'
+    # )
+    print(currency_table)
 
-    # getting all dates
-    dates = sorted(list(set(csv_df['Pitch date'].tolist())))
-    logging.info(f'All dates: {dates}')
 
     #RECURSIVE OPTIMISATION
     #TEMP VARIABLES
 
     # FIRST LOOP WILL START WITH INITIAL CAPITAL OF 15000
+    # 15084.63
     capital_values = [15000]
     portfolio_values = []
     for index, date in enumerate(dates):
+        # if index == 0:
+        #     continue
 
         logging.info(f'Iteration for {date}')
-        logging.info(f'Available capital: ${capital_values[index]}')
+        logging.info(f'Available capital: {capital_values[index]}')
 
         # filtering out symbols and dates that are not in the time period we're looking at in
         # this iteration
         # REPLACE WITH CSV_DF DROP
         loop_dates = [day for index, day in enumerate(dates) if index <= dates.index(date)]
+        # list slicing; probably much faster
+        # loop_dates = dates[:index+1]
+
+
         logging.info(f'loop_dates: {loop_dates}')
 
         # CSV_DF FILTERING - ONLY STOCKS PITCHED WITHIN THIS ITERATION'S DATES
@@ -397,12 +501,29 @@ def main():
         # logging.info(confidences)
         # logging.info(f'mkt_caps: {mkt_caps}')
 
-        merged_prices = fetch_pitched_stock_data(tracking_dict, loop_dates)
+        # +2 bc slicing does not include the element after :, and we want the element after the index, so we add 2
+        fetch_data_dates = dates[:index+2]
+        merged_prices = fetch_pitched_stock_data(
+            tracking_dict=tracking_dict,
+            fetch_data_dates=fetch_data_dates,
+            currency_dict=currency_dict
+        )
         print(merged_prices)
 
-        allocation, leftover = optimisation(merged_prices, confidences, view_dict, mkt_caps, capital_values[index])
-        # assuming that we're going to liquidate and repurchase on the same day 7 days from now
+
+        # headers = merged_prices.columns
+        # for symbol in headers:
+        #     symbol_prices = merged_prices[symbol]
+        #     for price in symbol_prices:
+
+
+        # LOOP-BREAK CONDITION
         if 0 <= (index + 1) < len(dates):
+            # CHANGED date --> dates[index + 1] as we will assume that we liquidate and repurchase 7 days from now
+            # MOVING WITHIN LOOPBREAK-CONDITIONAL TO PREVENT INDEX ERROR
+            allocation, leftover = optimisation(merged_prices, confidences, view_dict, mkt_caps, capital_values[index], dates[index + 1])
+            # assuming that we're going to liquidate and repurchase on the same day 7 days from now
+
             portfolio_value = get_portfolio_value(allocation, dates[index + 1], currency_dict)
 
             portfolio_values.append(portfolio_value)
@@ -415,11 +536,11 @@ def main():
 
     portfolio_tracker_df = pd.DataFrame(index=dates)
     portfolio_tracker_df['Value'] = capital_values
-    write_plot(data=portfolio_tracker_df, subject='Black-Litterman')
+    plot_data(data=portfolio_tracker_df, subject='Black-Litterman')
 
     print(capital_values)
     for index, value in enumerate(capital_values):
-        logging.info(f'capital_value at {dates[index]}: £{value}')
+        logging.info(f'capital_value at {dates[index]}: {value}')
 
 
 if __name__ == '__main__':
