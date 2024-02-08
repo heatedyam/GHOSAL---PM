@@ -1,9 +1,16 @@
+Symbol,Pitch date,Sector,View,Confidence
+FRVIA.PA,2024-02-08,Industrials,0.03,0.47
+NEE,2024-02-08,Energy,0.05,0.50
+HSY,2024-02-08,Consumer Staples,0.04,0.45
+CRH.L,2024-02-01,Materials,0.10,0.58
+ACLS,2024-02-01,Tech,0.08,0.48
+DGE.L,2024-02-01,Consumer Discretionary,0.02,0.50
 VK.PA,2024-01-25,Industrials,0.04,0.50
 TMUS,2024-01-25,Tech,0.04,0.58
-VWS.CO,2024-01-25,Energy,0.00,0.50
-OGN.L,2024-01-25,Consumer Staples, -0.02,0.58
-LYB,2024-01-18,Materials,0.00,1
-SMCI,2024-01-18,Tech,0.00,1
+VWS.CO,2024-01-25,Energy,0.05,0.50
+OGN.L,2024-01-25,Consumer Staples,0.02,0.58
+LYB,2024-01-18,Materials,0.10,0.80
+SMCI,2024-01-18,Tech,0.08,0.50
 DOLE,2023-12-14,Consumer Staples,0.05,0.51
 AC.PA,2023-12-14,Consumer Discretionary,0.10,0.16
 GF.SW,2023-12-14,Industrials,0.07,0.29
@@ -20,4 +27,4 @@ GOOGL,2023-11-16,Tech,0.14,0.67
 CDNS,2023-11-16,Tech,0.12,0.26
 P911.DE,2023-11-09,Consumer Discretionary,0.10,0.08
 GNC.L,2023-11-09,Consumer Staples,0.03,0.8
-CAT,2023-11-09,Industrials,0.09,0.84
+CAT,2023-11-09,Industrials,0.15,0.84
